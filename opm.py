@@ -24,7 +24,7 @@ vaults = [] # list of availible vaults
 v_pi = {} # vault padded indexes
 p_pi = {} # plugin padded indexes
 
-version = "1.0"
+version = "1.0.1"
 greetstr = rf"""
 {"\t"}     _______   _______   __      __
 {"\t"}    \  ___  / \   __  \ \  \    /  /
@@ -175,19 +175,10 @@ def c_list(*args, **kwargs):
         return
     l = [l[i] for i in r]
 
+    indent = True
     for v in l:
-        vn = v["n"]
-        print(f"\n\t{v_pi[vn]}. {vn}: ", end='')
-
-        lpd = [pd for pd in scanvault(v) if pd["m"] in mode]
-        if len(lpd) == 0:
-            print('no relevant results')
-        else:
-            print('\n')
-            for pd in lpd:
-                pn = pd["n"]
-                print(f"\t\t[{pd["m"]}] {p_pi[pn]}. {pn}")
-        print()
+        listplugins(indent=indent, vault=v, mode=mode)
+        indent = False
 
 def c_remove(*args, **kwargs):
     if len(args) < 3:
@@ -224,61 +215,59 @@ def c_remove(*args, **kwargs):
 
     
     if args[2] == "uploaded":
-        print()
-        print(f"\tThese plugins will be removed from uploaded:\n")
-        paths = [de.path for de in upde if de.name in pl]
-        for p in pl:
-            print(f"\t{p_pi[p]}. {p}")
-        print()
-            
+        listplugins( 
+            message = f"These uploaded plugins will be removed", 
+            plugin_name_list = pl,
+        )
+        
         if confirm() == True:
             vpath = os.path.join(trash, "UPLOADED", time())
             os.makedirs(vpath)
-            for ppath in paths:
+            for ppath in (de.path for de in upde if de.name in pl):
                 dpath = os.path.join(vpath, os.path.basename(ppath))
                 move(ppath, dpath)
             print(f"{suc}Done, all data removed to {vpath}")
             print()
             execute("scan")
-    else:
-        delflag = False
-        for v in vl:
-            print()
-            vn = v["n"]
-            print(f"\tThese plugins will be removed from {v_pi[vn]}. {vn}: ", end="")
-            
-            lpd = [pd for pd in scanvault(v) if pd["n"] in pl and pd["m"] in mode]
-            lpd.sort(key=lambda pd: pd["i"])
-            if len(lpd) == 0:
-                print("none\n")
-                continue
-            print("\n")
-            
-            for pd in lpd:
-                pn = pd["n"]
-                print(f"\t\t[{pd["m"]}] {p_pi[pn]}. {pn}")
-            print()
-            if confirm() == True:
-                ppaths = [pd["de"].path for pd in lpd]
-                
-                vpath = os.path.join(trash, v["n"], time())
-                os.makedirs(vpath)
-                    
-                for ppath in ppaths:
-                    dpath = os.path.join(vpath, os.path.basename(ppath))
-                    move(ppath, dpath)
-                
-                print(f"{suc}Done, all data removed to {vpath}")
-                delflag = True
-            else:
-                print("\tOperation canceled")
-                if delflag:
-                    execute("scan")
-                return
-            print()
+        else:
+            print("\tOperation canceled")
+        return
+    
+    delflag = False
+    indent = True
+    for v in vl:
+        i, lpd = listplugins(
+            indent=indent,
+            message= "These plugins will be removed from",
+            vault=v,
+            plugin_name_list=pl,
+            mode=mode
+        )
+        indent = False
+        if i == 0:
+            continue
         
-        if delflag:
-            execute("scan")
+        if confirm() == True:
+            ppaths = [pd["de"].path for pd in lpd]
+            
+            vpath = os.path.join(trash, v["n"], time())
+            os.makedirs(vpath)
+                
+            for ppath in ppaths:
+                dpath = os.path.join(vpath, os.path.basename(ppath))
+                move(ppath, dpath)
+            
+            print(f"{suc}Done, all data removed to {vpath}")
+            delflag = True
+        else:
+            print("\tOperation canceled")
+            if delflag:
+                execute("scan")
+            return
+        print()
+    
+    if delflag:
+        execute("scan")
    
 def c_scan(*args, **kwargs):
     dirs = {t[0]:t[1] for t in os.walk(".")}
@@ -337,7 +326,7 @@ def c_scan(*args, **kwargs):
     for i in range(len(total)):
         p_pi[total[i]] = pad(str(i), plen, r=False)
     
-    print(f"{suc}Scan completed")
+    print(f"{suc}Scan completed\n")
     
 def c_show(*args, **kwargs):
     # Validate keyword
@@ -427,7 +416,9 @@ def c_uplink(*args, **kwargs):
             return
     
     change_flag = False
+    indent = True
     for v in vl:
+        vn=v["n"]
         pde = v["lpde"]
         
         to_add = []
@@ -449,27 +440,32 @@ def c_uplink(*args, **kwargs):
                     not de.is_symlink() and
                     not de.is_junction()
             ]
-            to_add = to_add + [de.name for de in to_replace]
+            replace_names = [de.name for de in to_replace]
+            to_add = to_add + replace_names
         
-        vn = v["n"]
-        print(f"\n\tThese plugins will be uplinked in {v_pi[vn]}. {vn}:", end="")
-        if len(to_add) == 0:
-            print("none\n")
+        i, _ = listplugins(
+            message="These plugins will be uplinked in",
+            vault=v,
+            plugin_name_list=to_add,
+            indent=indent
+        )
+        if i == 0:
+            indent = False
             continue
-        print("\n")
-        for p_name in to_add:
-            print(f"\t\t{p_pi[p_name]}. {p_name}")
-        print()
+        else:
+            indent = True
         
         if len(to_replace) > 0:
-            print(f"\tThese plugins will be replaced in {v_pi[vn]}. {vn}:\n")
-            for n in (de.name for de in to_replace):
-                print(f"\t\t{p_pi[n]}. {n}")
-            print()
+            listplugins(
+                message="These plugins will be replaced in",
+                vault=v,
+                plugin_name_list=replace_names,
+                indent=False
+            )
 
         if confirm() == True:
             if mode_replace:
-                trash_path = os.path.join(trash, v["n"], time())
+                trash_path = os.path.join(trash, vn, time())
                 os.makedirs(trash_path) 
             
                 for de in to_replace:
@@ -543,21 +539,17 @@ def c_upload(*args, **kwargs):
             pl.remove(p)
             continue
         i += 1
-
     if errflag:
         offerhelp()
     
-    print(
-        f"\n\tFollowing plugins will be uploaded from " +
-        f"{v_pi[v["n"]]}. {v["n"]}:", end=''
+    i, _ = listplugins(
+        message="Following plugins will be uploaded from",
+        vault=v,
+        plugin_name_list=pl
     )
-    if len(pl) == 0:
-        print("none\n")
+    if i == 0:
         return
-    print("\n")
-    for p in pl:
-        print(f"\t\t{p_pi[p]}. {p}")
-    print()
+    
     if confirm() == False:
         print("\tUpload canceled")
         return
@@ -729,6 +721,63 @@ def confirm():
 def time():
     s = str(datetime.now())
     return (s[:10] + s[11:]).replace(':', '-')
+
+def listplugins(
+    *args, 
+    message = None, 
+    vault=None, 
+    plugin_name_list = None, 
+    mode=None,
+    indent=True
+):
+    # Valid input:
+    # vault, [plugin_name_list], mode, [messgage]
+    #[vault], plugin_name_list, [messgage]
+
+    if indent:
+        print()
+    if message is None:
+        message = ""
+    vault_str = ": "
+    if vault is not None:
+        vn = vault["n"]
+        vault_str = f" {v_pi[vn]}. {vn}" + vault_str
+    
+    print("\t" + message + vault_str, end=" ")
+    
+    if mode is not None: # need to filter by mode
+        if vault is None: 
+            raise ValueError() # should never happen!
+        lpd = [pd for pd in scanvault(vault) if pd["m"] in mode]
+        if plugin_name_list is not None:
+            lpd = [pd for pd in lpd if pd["n"] in plugin_name_list]
+        if len(lpd) == 0:
+            print("none\n")
+            return 0, None
+        lpd.sort(key=lambda pd: pd["i"])
+        
+        print("\n")
+        i = 0
+        for pd in lpd:
+            i += 1
+            pn = pd["n"]
+            print(f"\t\t[{pd["m"]}] {p_pi[pn]}. {pn}")
+        print()
+        return i, lpd
+    elif plugin_name_list is not None:
+        if len(plugin_name_list) == 0:
+            print("none\n")
+            return 0, None
+        
+        print("\n")
+        i = 0
+        for pn in plugin_name_list:
+            i += 1
+            print(f"\t\t{p_pi[pn]}. {pn}")
+        print()
+        return i, None
+    else:
+        raise ValueError() # should never happen!
 
 def main():
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
