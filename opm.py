@@ -18,7 +18,7 @@ dbg = "[DEBUG]\t"
 suc = "[OK]   \t"
 
 uploaded = [] # list of uploaded plugins
-total = [] # list of all plugins, both uplloaded and not
+total = [] # list of all plugins, both uploaded and not
 upde = [] # list of uploaded plugin dir entries
 vaults = [] # list of availible vaults
 v_pi = {} # vault padded indexes
@@ -65,7 +65,7 @@ helpstr = """\t<..._range>
 \t\tExit plugin manager
 
 \tfind <available_plugin_range> [<mode>]
-\t\tFind vaults, where specified plugins are installed in as <mode>
+\t\tFind vaults where specified plugins are installed in as <mode>
 \t\t<mode> is "DJS" by default
 
 \thelp 
@@ -98,8 +98,8 @@ helpstr = """\t<..._range>
 
 \tupload <available_plugin_range> from <vault_range>
 \t\tUpload plugin(s) form specified vault
-\t\tNOTE: only first value from <vault_range> is usede
-\t\tAlready uploaded plugins can not be uploaded and must be deleted
+\t\tDuplicate plugins are not uploaded
+\t\tNOTE: only first value from <vault_range> is used
 """
 
 def offerhelp(*args, **kwargs):
