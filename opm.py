@@ -24,7 +24,7 @@ vaults = [] # list of availible vaults
 v_pi = {} # vault padded indexes
 p_pi = {} # plugin padded indexes
 
-version = "1.0.1"
+version = "1.0.2"
 greetstr = rf"""
 {"\t"}     _______   _______   __      __
 {"\t"}    \  ___  / \   __  \ \  \    /  /
@@ -39,8 +39,6 @@ greetstr = rf"""
 
 # TODO: 
 # - obsidian hotkey management via symlinks
-# - command to rename specific plugin in specific vaults (only for non uploaded)
-# - command to copy specific plugin into specific vault (from another vault or from uploaded)
 
 helpstr = """\t<..._range>
 \t\tNumeric range used to select vaults or plugins
@@ -60,6 +58,12 @@ helpstr = """\t<..._range>
 
 \tclear
 \t\tClear console
+
+\tcopy <available_plugin_range> from <vault_range> to <vault_range>
+\tcopy <uploaded_plugin_range> from uploaded to <vault_range>
+\t\tCopy specified plugins from specified place to specified vaults
+\t\tDoes nothing if these plugins are already installed in these vaults
+\t\tNOTE: only first value from first <vault_range> is used
 
 \t[exit|quit]
 \t\tExit plugin manager
@@ -104,6 +108,103 @@ helpstr = """\t<..._range>
 
 def offerhelp(*args, **kwargs):
     print("\tEnter \"help\" to get command and keyword reference")
+
+def c_copy(*args, **kwargs):
+    if len(args) < 5:
+        print(f"{err} Not enough arguments")
+        offerhelp()
+        return
+    if args[1] != 'from':
+        print(f"{err} Unknown keyword \"{args[1]}\"")
+        offerhelp()
+        return
+    if args[3] != 'to':
+        print(f"{err} Unknown keyword \"{args[3]}\"")
+        offerhelp()
+        return
+    
+    if args[2] == "uploaded":
+        pl = uploaded
+    else:
+        pl = total
+    pr = parserange(args[0], len(pl))
+    if pr is None:
+        return
+    pl = [pl[i] for i in pr]
+
+    vl = vaults
+    vr = parserange(args[4], len(vl))
+    if vr == None:
+        return
+    dst_vaults = [vl[i] for i in vr]
+    
+    change_flag = False
+    if args[2] == "uploaded":
+        lde = upde
+        msg = f"These uploaded plugins will be copied to"
+    else:
+        vr = parserange(args[2], len(vl))
+        if vr is None:
+            return
+        src_vault = vl[vr[0]]
+        lde = src_vault["lpde"]
+    
+        i = 0
+        src_installed = [de.name for de in lde]
+        src_s = f"{v_pi[src_vault["n"]]}. {src_vault["n"]}"
+        while i < len(pl):
+            if pl[i] in src_installed:
+                i += 1
+                continue
+            print(
+                f"{err}Plugin {p_pi[pl[i]]} {pl[i]} " +
+                f"is not installed in vault {src_s}"
+            )
+            pl.pop(i)
+            
+        msg = (
+            "These plugins will be copied " + 
+            f"from {src_s} to"
+        )
+        
+    indent = True
+    for v in dst_vaults:
+        already_installed = [de.name for de in v["lpde"]]
+        to_copy =  [p for p in pl if p not in already_installed]
+        
+        i, _ = listplugins(
+            indent=indent,
+            message=msg,
+            vault=v,
+            plugin_name_list=to_copy
+        )
+        if i == 0:
+            indent = False
+            continue
+        indent = True
+
+        if confirm() == True:
+            for de in lde:
+                if de.name not in to_copy:
+                    continue
+                src_path = de.path
+                dst_path = os.path.join(v["pp"], de.name)
+                copytree(
+                    src_path, 
+                    dst_path,
+                    symlinks=True, 
+                    ignore_dangling_symlinks=True
+                )
+                change_flag = True
+            vn = v["n"]
+            print(f"{suc}Copy from {src_s} to {v_pi[vn]}. {vn} done")
+        else:
+            print("\tOperation canceled")
+            break
+    
+    print()
+    if change_flag:
+        execute("scan")
 
 def c_clear(*args, **kwargs):
     cmd = "cls" if os.name == "nt" else "clear"
@@ -565,6 +666,7 @@ def c_upload(*args, **kwargs):
 commands = {
     c.__name__[2:]: c 
     for c in (
+        c_copy,
         c_clear, 
         c_exit, 
         c_find, 
