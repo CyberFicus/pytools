@@ -61,27 +61,28 @@ helpstr = """\t<..._range>
 
 \tcopy <available_plugin_range> from <vault_range> to <vault_range>
 \tcopy <uploaded_plugin_range> from uploaded to <vault_range>
-\t\tCopy specified plugins from specified place to specified vaults
-\t\tDoes nothing if these plugins are already installed in these vaults
+\t\tCopy specified plugin(s) from specified place to specified vault(s)
+\t\tDoes nothing if these plugins are already installed in the target vault(s)
 \t\tNOTE: only first value from first <vault_range> is used
 
 \t[exit|quit]
 \t\tExit plugin manager
 
 \tfind <available_plugin_range> [<mode>]
-\t\tFind vaults where specified plugins are installed in as <mode>
+\t\tFind vault(s) where specified plugin(s) are installed in as <mode>
 \t\t<mode> is "DJS" by default
 
 \thelp 
 \t\tShow command and keyword reference
 
 \tlist <vaults_range> [<mode>]
-\t\tList plugins from specified vaults as well as their installation mode
+\t\tList plugins from specified vault(s) as well as their installation mode
+\t\tCan be filtered by instllation mode
 \t\t<mode> is "DJS" by default
 
 \t[remove|delete] <available_plugin_range> from <vault_range> [<mode>]
-\tRemove <uploaded_plugin_range> from uploaded
-\t\tRemove selected plugins from selected place(s) to trash directory
+\tremove <uploaded_plugin_range> from uploaded
+\t\tRemove selected plugin(s) from selected place(s) to trash directory
 \t\tCan be filtered by plugin's installation mode
 \t\t<mode> is "DJS" by default
 
@@ -94,8 +95,8 @@ helpstr = """\t<..._range>
 \t\tIf keyword is provided, only respective category is shown
 
 \tuplink <uploaded_plugin_range> in <vault_range> [add|replace]
-\t\tUplink specified plugins in specified vaults
-\t\tBy default, uplinks both installed and not installed plugins
+\t\tUplink specified plugin(s) in specified vault(s)
+\t\tBy default, both installed and not installed plugins are uplinked
 \t\tOptional keywords:
 \t\t- add     - only uplink plugins that are not already installed
 \t\t- replace - only uplink plugins that are already installed
