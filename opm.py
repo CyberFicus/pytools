@@ -1,30 +1,29 @@
 # CONFIG START
 # Change values, but not variable names
 # Path where you want to store uploaded plugins:
-pspath = ".obsidian-global"
+psroot = ".obsidian-global"
 # CONFIG END
 
 import sys, io, os
 from datetime import datetime
-from shutil import move, copytree
+from shutil import move, copytree, copy2
 from time import sleep
-
-trash = os.path.join(pspath, "trash")
-pspath = os.path.join(pspath, "plugins")
-pdname = "plugins" # obsidian plugin directory name
 
 err = "[ERROR]\t" 
 dbg = "[DEBUG]\t"
 suc = "[OK]   \t"
 
+trash = os.path.join(psroot, "trash")
 uploaded = [] # list of uploaded plugins
 total = [] # list of all plugins, both uploaded and not
 upde = [] # list of uploaded plugin dir entries
+uhkde = None # uploaded hotkeys dir entry
 vaults = [] # list of availible vaults
 v_pi = {} # vault padded indexes
 p_pi = {} # plugin padded indexes
+pspath = psroot
 
-version = "1.0.2"
+version = "1.1"
 greetstr = rf"""
 {"\t"}     _______   _______   __      __
 {"\t"}    \  ___  / \   __  \ \  \    /  /
@@ -74,6 +73,17 @@ helpstr = """\t<..._range>
 
 \thelp 
 \t\tShow command and keyword reference
+
+\thotkeys show
+\t\tShow current status of hotkeys files in vaults
+\t\t[F] means "local file" and [S] means "symlink"
+
+\thotkeys [uplink|unlink] in <vault_range>
+\t\tUplink/unlink hotkey file(s) in sepcified vault(s) to uploaded hotkey file
+
+\thotkeys upload from <vault_range>
+\t\tUpload hotkey file from sepcified vault
+\t\tNOTE: only first value from <vault_range> is used
 
 \tlist <vaults_range> [<mode>]
 \t\tList plugins from specified vault(s) as well as their installation mode
@@ -258,6 +268,136 @@ def c_find(*args, **kwargs):
 def c_help(*args, **kwargs):
     print(helpstr)
 
+def c_hotkeys(*args, **kwargs):
+    vl = vaults
+    uploaded_path = os.path.join(psroot, "hotkeys.json")
+    if args[0] == "show":
+        print("\n\tUPLOADED HOTKEYS: ", end="")
+        if uhkde is None:
+            print("none\n")
+            print("\tTIP: use command \"hotkeys upload\" to upload hotkeys from vaults")
+            offerhelp()
+            print()
+        else:
+            m = "S" if uhkde.is_symlink() else "F"
+            print(f"[{m}]\n")
+            
+        print("\tVAULTS: ", end="")
+        if (len(vl) == 0):
+            print("none\n")
+            return
+        print("\n")
+        for v in vl:
+            vn = v["n"]
+            m = "S" if v["hkde"].is_symlink() else "F"
+            print(f"\t[{m}] {v_pi[vn]}. {vn}")
+        print()
+    elif args[0] == "uplink" or args[0] == "unlink":
+        if args[1] != "in":
+            print(f"{err}Unknown keyword {args[1]}")
+            offerhelp()
+            return
+        if len(args) < 3:
+            print(f"{err}Not enough arguments")
+            offerhelp()
+            return
+        
+        vr = parserange(args[2], len(vl))
+        if vr is None:
+            return
+        vl = [vl[i] for i in vr]
+        
+        if uhkde is None:
+            print("{err}No uploaded hotkeys. See \"hotkeys upload\"")
+            offerhelp()
+            print()
+            return
+        
+        print()
+        change_flag = False
+        for v in vl:
+            vn = v["n"]
+            vs = f"{v_pi[vn]}. {vn}"
+            
+            if args[0] == "uplink":
+                if v["hkde"].is_symlink():
+                    print(f"\tHotkeys in {vs} are already uplinked\n")
+                    continue
+            else:
+                if not v["hkde"].is_symlink():
+                    print(f"\tHotkeys in {vs} are already unlinked\n")
+                    continue
+            
+            print(f"\tHotkeys in {vs} will be {args[0]}ed")
+            if confirm() == True:
+                trash_path = os.path.join(trash, "hotkeys", vn, time())
+                os.makedirs(trash_path)
+                trash_path = os.path.join(trash_path, "hotkeys.json")
+                
+                hk_path = v["hkde"].path
+                move(hk_path, trash_path)
+                print(f"{suc}Old hotkeys moved to {trash_path}")
+                change_flag = True
+                
+                if args[0] == "uplink":
+                    dst_path = os.path.join(os.getcwd(), uhkde.path)
+                    cmd = rf'mklink "{hk_path}" "{dst_path}" > nul'
+                    res = os.system(cmd)
+                    if res != 0:
+                        print(f"{err}Failed to run \"{cmd}\". Error code: {res}")
+                        execute("scan")
+                        return
+                else:
+                    copy2(uhkde.path, hk_path)
+                    
+                print(f"{suc}Hotkey {args[0]} in {vs} done\n")
+            else:
+                print("\tOperation canceled\n")
+                break
+        
+        if change_flag:
+            execute("scan")
+        else:
+            print()
+    elif args[0] == "upload":
+        if args[1] != "from":
+            print(f"{err}Unknown keyword {args[1]}")
+            offerhelp()
+            return
+        if len(args) < 3:
+            print(f"{err}Not enough arguments")
+            offerhelp()
+            return
+        
+        print()
+        
+        vr = parserange(args[2], len(vl))
+        if vr is None:
+            return
+        v = vl[vr[0]]
+        vs = f"{v_pi[v["n"]]}. {v["n"]}"
+
+        if uhkde is not None:
+            print(f"\tUploaded hotkeys will be replaced by hotkeys from {vs}")
+            if confirm() == True:
+                trash_path = os.path.join(trash, "hotkeys", "uploaded", time())
+                os.makedirs(trash_path)
+                trash_path = os.path.join(trash_path, "hotkeys.json")
+                move(uploaded_path, trash_path)
+                print(f"{suc}Old hotkeys moved to {trash_path}")
+            else:
+                print("\tOperation canceled\n")
+                return
+        
+        src_path = v["hkde"].path
+        copy2(src_path, uploaded_path)
+        
+        print(f"{suc}Hotkey upload from {vs} done")
+        execute("scan")
+        return
+    else:
+        print(f"{err}Unknown keyword: {args[0]}\n")
+
 def c_list(*args, **kwargs):
     if len(args) < 1:
         print(f"{err}Invalid syntax: at least one parameter needed")
@@ -376,11 +516,20 @@ def c_scan(*args, **kwargs):
     tldirs = dirs.pop(".") # top level dirs
     
     # Validate ps and get uploaded plugin dir entries
+    global pspath
+    pspath = os.path.join(psroot, "plugins")
     if os.path.join(".", pspath) not in dirs:
         print(f"{err}\"{pspath}\" not found in \"{os.getcwd()}\"")
         exit()
-    global upde 
-    upde = [de for de in os.scandir(pspath) if de.is_dir() ]
+    global upde     
+    upde = [de for de in os.scandir(pspath) if de.is_dir()]
+    
+    global uhkde
+    uhkde = None
+    for de in os.scandir(psroot):
+        if de.is_file and de.name == "hotkeys.json":
+            uhkde = de
+            break
     
     # Get available vaults
     global vaults
@@ -389,6 +538,16 @@ def c_scan(*args, **kwargs):
         o = os.path.join(".", d, ".obsidian") 
         if d[0] == '.' or o not in dirs:
             continue
+            
+        # get hotkeys file
+        for de in os.scandir(o):
+            if de.is_file() and de.name == "hotkeys.json":
+                hkde = de
+                break
+        else:
+            print(f"{err} Unable to find hotkeys file in {o}. Skipping vault {d}")
+            continue
+            
         pp = os.path.join(o, "plugins")
         if pp not in dirs:
             os.mkdir(pp)
@@ -398,6 +557,7 @@ def c_scan(*args, **kwargs):
                 de for de in os.scandir(pp) 
                 if de.is_dir()
             ], 
+            "hkde": hkde, # hotkeys dir entry
             "lpd": None # local plugins data
         })
     vaults.sort(key=lambda e: e["n"])
@@ -672,6 +832,7 @@ commands = {
         c_exit, 
         c_find, 
         c_help, 
+        c_hotkeys,
         c_list, 
         c_remove, 
         c_scan, 
