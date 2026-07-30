@@ -1,30 +1,29 @@
 # CONFIG START
 # Change values, but not variable names
 # Path where you want to store uploaded plugins:
-pspath = ".obsidian-global"
+psroot = ".obsidian-global"
 # CONFIG END
 
 import sys, io, os
 from datetime import datetime
-from shutil import move, copytree
+from shutil import move, copytree, copy2
 from time import sleep
-
-trash = os.path.join(pspath, "trash")
-pspath = os.path.join(pspath, "plugins")
-pdname = "plugins" # obsidian plugin directory name
 
 err = "[ERROR]\t" 
 dbg = "[DEBUG]\t"
 suc = "[OK]   \t"
 
+trash = os.path.join(psroot, "trash")
 uploaded = [] # list of uploaded plugins
-total = [] # list of all plugins, both uplloaded and not
+total = [] # list of all plugins, both uploaded and not
 upde = [] # list of uploaded plugin dir entries
+uhkde = None # uploaded hotkeys dir entry
 vaults = [] # list of availible vaults
 v_pi = {} # vault padded indexes
 p_pi = {} # plugin padded indexes
+pspath = psroot
 
-version = "1.0"
+version = "1.1"
 greetstr = rf"""
 {"\t"}     _______   _______   __      __
 {"\t"}    \  ___  / \   __  \ \  \    /  /
@@ -39,8 +38,6 @@ greetstr = rf"""
 
 # TODO: 
 # - obsidian hotkey management via symlinks
-# - command to rename specific plugin in specific vaults (only for non uploaded)
-# - command to copy specific plugin into specific vault (from another vault or from uploaded)
 
 helpstr = """\t<..._range>
 \t\tNumeric range used to select vaults or plugins
@@ -61,23 +58,41 @@ helpstr = """\t<..._range>
 \tclear
 \t\tClear console
 
+\tcopy <available_plugin_range> from <vault_range> to <vault_range>
+\tcopy <uploaded_plugin_range> from uploaded to <vault_range>
+\t\tCopy specified plugin(s) from specified place to specified vault(s)
+\t\tDoes nothing if these plugins are already installed in the target vault(s)
+\t\tNOTE: only first value from first <vault_range> is used
+
 \t[exit|quit]
 \t\tExit plugin manager
 
 \tfind <available_plugin_range> [<mode>]
-\t\tFind vaults, where specified plugins are installed in as <mode>
+\t\tFind vault(s) where specified plugin(s) are installed in as <mode>
 \t\t<mode> is "DJS" by default
 
 \thelp 
 \t\tShow command and keyword reference
 
+\thotkeys show
+\t\tShow current status of hotkeys files in vaults
+\t\t[F] means "local file" and [S] means "symlink"
+
+\thotkeys [uplink|unlink] in <vault_range>
+\t\tUplink/unlink hotkey file(s) in sepcified vault(s) to uploaded hotkey file
+
+\thotkeys upload from <vault_range>
+\t\tUpload hotkey file from sepcified vault
+\t\tNOTE: only first value from <vault_range> is used
+
 \tlist <vaults_range> [<mode>]
-\t\tList plugins from specified vaults as well as their installation mode
+\t\tList plugins from specified vault(s) as well as their installation mode
+\t\tCan be filtered by instllation mode
 \t\t<mode> is "DJS" by default
 
 \t[remove|delete] <available_plugin_range> from <vault_range> [<mode>]
-\tRemove <uploaded_plugin_range> from uploaded
-\t\tRemove selected plugins from selected place(s) to trash directory
+\tremove <uploaded_plugin_range> from uploaded
+\t\tRemove selected plugin(s) from selected place(s) to trash directory
 \t\tCan be filtered by plugin's installation mode
 \t\t<mode> is "DJS" by default
 
@@ -90,20 +105,117 @@ helpstr = """\t<..._range>
 \t\tIf keyword is provided, only respective category is shown
 
 \tuplink <uploaded_plugin_range> in <vault_range> [add|replace]
-\t\tUplink specified plugins in specified vaults
-\t\tBy default, uplinks both installed and not installed plugins
+\t\tUplink specified plugin(s) in specified vault(s)
+\t\tBy default, both installed and not installed plugins are uplinked
 \t\tOptional keywords:
 \t\t- add     - only uplink plugins that are not already installed
 \t\t- replace - only uplink plugins that are already installed
 
 \tupload <available_plugin_range> from <vault_range>
 \t\tUpload plugin(s) form specified vault
-\t\tNOTE: only first value from <vault_range> is usede
-\t\tAlready uploaded plugins can not be uploaded and must be deleted
+\t\tDuplicate plugins are not uploaded
+\t\tNOTE: only first value from <vault_range> is used
 """
 
 def offerhelp(*args, **kwargs):
     print("\tEnter \"help\" to get command and keyword reference")
+
+def c_copy(*args, **kwargs):
+    if len(args) < 5:
+        print(f"{err} Not enough arguments")
+        offerhelp()
+        return
+    if args[1] != 'from':
+        print(f"{err} Unknown keyword \"{args[1]}\"")
+        offerhelp()
+        return
+    if args[3] != 'to':
+        print(f"{err} Unknown keyword \"{args[3]}\"")
+        offerhelp()
+        return
+    
+    if args[2] == "uploaded":
+        pl = uploaded
+    else:
+        pl = total
+    pr = parserange(args[0], len(pl))
+    if pr is None:
+        return
+    pl = [pl[i] for i in pr]
+
+    vl = vaults
+    vr = parserange(args[4], len(vl))
+    if vr == None:
+        return
+    dst_vaults = [vl[i] for i in vr]
+    
+    change_flag = False
+    if args[2] == "uploaded":
+        lde = upde
+        msg = f"These uploaded plugins will be copied to"
+    else:
+        vr = parserange(args[2], len(vl))
+        if vr is None:
+            return
+        src_vault = vl[vr[0]]
+        lde = src_vault["lpde"]
+    
+        i = 0
+        src_installed = [de.name for de in lde]
+        src_s = f"{v_pi[src_vault["n"]]}. {src_vault["n"]}"
+        while i < len(pl):
+            if pl[i] in src_installed:
+                i += 1
+                continue
+            print(
+                f"{err}Plugin {p_pi[pl[i]]} {pl[i]} " +
+                f"is not installed in vault {src_s}"
+            )
+            pl.pop(i)
+            
+        msg = (
+            "These plugins will be copied " + 
+            f"from {src_s} to"
+        )
+        
+    indent = True
+    for v in dst_vaults:
+        already_installed = [de.name for de in v["lpde"]]
+        to_copy =  [p for p in pl if p not in already_installed]
+        
+        i, _ = listplugins(
+            indent=indent,
+            message=msg,
+            vault=v,
+            plugin_name_list=to_copy
+        )
+        if i == 0:
+            indent = False
+            continue
+        indent = True
+
+        if confirm() == True:
+            for de in lde:
+                if de.name not in to_copy:
+                    continue
+                src_path = de.path
+                dst_path = os.path.join(v["pp"], de.name)
+                copytree(
+                    src_path, 
+                    dst_path,
+                    symlinks=True, 
+                    ignore_dangling_symlinks=True
+                )
+                change_flag = True
+            vn = v["n"]
+            print(f"{suc}Copy from {src_s} to {v_pi[vn]}. {vn} done")
+        else:
+            print("\tOperation canceled")
+            break
+    
+    print()
+    if change_flag:
+        execute("scan")
 
 def c_clear(*args, **kwargs):
     cmd = "cls" if os.name == "nt" else "clear"
@@ -156,6 +268,136 @@ def c_find(*args, **kwargs):
 def c_help(*args, **kwargs):
     print(helpstr)
 
+def c_hotkeys(*args, **kwargs):
+    vl = vaults
+    uploaded_path = os.path.join(psroot, "hotkeys.json")
+    if args[0] == "show":
+        print("\n\tUPLOADED HOTKEYS: ", end="")
+        if uhkde is None:
+            print("none\n")
+            print("\tTIP: use command \"hotkeys upload\" to upload hotkeys from vaults")
+            offerhelp()
+            print()
+        else:
+            m = "S" if uhkde.is_symlink() else "F"
+            print(f"[{m}]\n")
+            
+        print("\tVAULTS: ", end="")
+        if (len(vl) == 0):
+            print("none\n")
+            return
+        print("\n")
+        for v in vl:
+            vn = v["n"]
+            m = "S" if v["hkde"].is_symlink() else "F"
+            print(f"\t[{m}] {v_pi[vn]}. {vn}")
+        print()
+    elif args[0] == "uplink" or args[0] == "unlink":
+        if args[1] != "in":
+            print(f"{err}Unknown keyword {args[1]}")
+            offerhelp()
+            return
+        if len(args) < 3:
+            print(f"{err}Not enough arguments")
+            offerhelp()
+            return
+        
+        vr = parserange(args[2], len(vl))
+        if vr is None:
+            return
+        vl = [vl[i] for i in vr]
+        
+        if uhkde is None:
+            print("{err}No uploaded hotkeys. See \"hotkeys upload\"")
+            offerhelp()
+            print()
+            return
+        
+        print()
+        change_flag = False
+        for v in vl:
+            vn = v["n"]
+            vs = f"{v_pi[vn]}. {vn}"
+            
+            if args[0] == "uplink":
+                if v["hkde"].is_symlink():
+                    print(f"\tHotkeys in {vs} are already uplinked\n")
+                    continue
+            else:
+                if not v["hkde"].is_symlink():
+                    print(f"\tHotkeys in {vs} are already unlinked\n")
+                    continue
+            
+            print(f"\tHotkeys in {vs} will be {args[0]}ed")
+            if confirm() == True:
+                trash_path = os.path.join(trash, "hotkeys", vn, time())
+                os.makedirs(trash_path)
+                trash_path = os.path.join(trash_path, "hotkeys.json")
+                
+                hk_path = v["hkde"].path
+                move(hk_path, trash_path)
+                print(f"{suc}Old hotkeys moved to {trash_path}")
+                change_flag = True
+                
+                if args[0] == "uplink":
+                    dst_path = os.path.join(os.getcwd(), uhkde.path)
+                    cmd = rf'mklink "{hk_path}" "{dst_path}" > nul'
+                    res = os.system(cmd)
+                    if res != 0:
+                        print(f"{err}Failed to run \"{cmd}\". Error code: {res}")
+                        execute("scan")
+                        return
+                else:
+                    copy2(uhkde.path, hk_path)
+                    
+                print(f"{suc}Hotkey {args[0]} in {vs} done\n")
+            else:
+                print("\tOperation canceled\n")
+                break
+        
+        if change_flag:
+            execute("scan")
+        else:
+            print()
+    elif args[0] == "upload":
+        if args[1] != "from":
+            print(f"{err}Unknown keyword {args[1]}")
+            offerhelp()
+            return
+        if len(args) < 3:
+            print(f"{err}Not enough arguments")
+            offerhelp()
+            return
+        
+        print()
+        
+        vr = parserange(args[2], len(vl))
+        if vr is None:
+            return
+        v = vl[vr[0]]
+        vs = f"{v_pi[v["n"]]}. {v["n"]}"
+
+        if uhkde is not None:
+            print(f"\tUploaded hotkeys will be replaced by hotkeys from {vs}")
+            if confirm() == True:
+                trash_path = os.path.join(trash, "hotkeys", "uploaded", time())
+                os.makedirs(trash_path)
+                trash_path = os.path.join(trash_path, "hotkeys.json")
+                move(uploaded_path, trash_path)
+                print(f"{suc}Old hotkeys moved to {trash_path}")
+            else:
+                print("\tOperation canceled\n")
+                return
+        
+        src_path = v["hkde"].path
+        copy2(src_path, uploaded_path)
+        
+        print(f"{suc}Hotkey upload from {vs} done")
+        execute("scan")
+        return
+    else:
+        print(f"{err}Unknown keyword: {args[0]}\n")
+
 def c_list(*args, **kwargs):
     if len(args) < 1:
         print(f"{err}Invalid syntax: at least one parameter needed")
@@ -175,19 +417,10 @@ def c_list(*args, **kwargs):
         return
     l = [l[i] for i in r]
 
+    indent = True
     for v in l:
-        vn = v["n"]
-        print(f"\n\t{v_pi[vn]}. {vn}: ", end='')
-
-        lpd = [pd for pd in scanvault(v) if pd["m"] in mode]
-        if len(lpd) == 0:
-            print('no relevant results')
-        else:
-            print('\n')
-            for pd in lpd:
-                pn = pd["n"]
-                print(f"\t\t[{pd["m"]}] {p_pi[pn]}. {pn}")
-        print()
+        listplugins(indent=indent, vault=v, mode=mode)
+        indent = False
 
 def c_remove(*args, **kwargs):
     if len(args) < 3:
@@ -224,72 +457,79 @@ def c_remove(*args, **kwargs):
 
     
     if args[2] == "uploaded":
-        print()
-        print(f"\tThese plugins will be removed from uploaded:\n")
-        paths = [de.path for de in upde if de.name in pl]
-        for p in pl:
-            print(f"\t{p_pi[p]}. {p}")
-        print()
-            
+        listplugins( 
+            message = f"These uploaded plugins will be removed", 
+            plugin_name_list = pl,
+        )
+        
         if confirm() == True:
             vpath = os.path.join(trash, "UPLOADED", time())
             os.makedirs(vpath)
-            for ppath in paths:
+            for ppath in (de.path for de in upde if de.name in pl):
                 dpath = os.path.join(vpath, os.path.basename(ppath))
                 move(ppath, dpath)
             print(f"{suc}Done, all data removed to {vpath}")
             print()
             execute("scan")
-    else:
-        delflag = False
-        for v in vl:
-            print()
-            vn = v["n"]
-            print(f"\tThese plugins will be removed from {v_pi[vn]}. {vn}: ", end="")
-            
-            lpd = [pd for pd in scanvault(v) if pd["n"] in pl and pd["m"] in mode]
-            lpd.sort(key=lambda pd: pd["i"])
-            if len(lpd) == 0:
-                print("none\n")
-                continue
-            print("\n")
-            
-            for pd in lpd:
-                pn = pd["n"]
-                print(f"\t\t[{pd["m"]}] {p_pi[pn]}. {pn}")
-            print()
-            if confirm() == True:
-                ppaths = [pd["de"].path for pd in lpd]
-                
-                vpath = os.path.join(trash, v["n"], time())
-                os.makedirs(vpath)
-                    
-                for ppath in ppaths:
-                    dpath = os.path.join(vpath, os.path.basename(ppath))
-                    move(ppath, dpath)
-                
-                print(f"{suc}Done, all data removed to {vpath}")
-                delflag = True
-            else:
-                print("\tOperation canceled")
-                if delflag:
-                    execute("scan")
-                return
-            print()
+        else:
+            print("\tOperation canceled")
+        return
+    
+    delflag = False
+    indent = True
+    for v in vl:
+        i, lpd = listplugins(
+            indent=indent,
+            message= "These plugins will be removed from",
+            vault=v,
+            plugin_name_list=pl,
+            mode=mode
+        )
+        indent = False
+        if i == 0:
+            continue
         
-        if delflag:
-            execute("scan")
+        if confirm() == True:
+            ppaths = [pd["de"].path for pd in lpd]
+            
+            vpath = os.path.join(trash, v["n"], time())
+            os.makedirs(vpath)
+                
+            for ppath in ppaths:
+                dpath = os.path.join(vpath, os.path.basename(ppath))
+                move(ppath, dpath)
+            
+            print(f"{suc}Done, all data removed to {vpath}")
+            delflag = True
+        else:
+            print("\tOperation canceled")
+            if delflag:
+                execute("scan")
+            return
+        print()
+    
+    if delflag:
+        execute("scan")
    
 def c_scan(*args, **kwargs):
     dirs = {t[0]:t[1] for t in os.walk(".")}
     tldirs = dirs.pop(".") # top level dirs
     
     # Validate ps and get uploaded plugin dir entries
+    global pspath
+    pspath = os.path.join(psroot, "plugins")
     if os.path.join(".", pspath) not in dirs:
         print(f"{err}\"{pspath}\" not found in \"{os.getcwd()}\"")
         exit()
-    global upde 
-    upde = [de for de in os.scandir(pspath) if de.is_dir() ]
+    global upde     
+    upde = [de for de in os.scandir(pspath) if de.is_dir()]
+    
+    global uhkde
+    uhkde = None
+    for de in os.scandir(psroot):
+        if de.is_file and de.name == "hotkeys.json":
+            uhkde = de
+            break
     
     # Get available vaults
     global vaults
@@ -298,6 +538,16 @@ def c_scan(*args, **kwargs):
         o = os.path.join(".", d, ".obsidian") 
         if d[0] == '.' or o not in dirs:
             continue
+            
+        # get hotkeys file
+        for de in os.scandir(o):
+            if de.is_file() and de.name == "hotkeys.json":
+                hkde = de
+                break
+        else:
+            print(f"{err} Unable to find hotkeys file in {o}. Skipping vault {d}")
+            continue
+            
         pp = os.path.join(o, "plugins")
         if pp not in dirs:
             os.mkdir(pp)
@@ -307,6 +557,7 @@ def c_scan(*args, **kwargs):
                 de for de in os.scandir(pp) 
                 if de.is_dir()
             ], 
+            "hkde": hkde, # hotkeys dir entry
             "lpd": None # local plugins data
         })
     vaults.sort(key=lambda e: e["n"])
@@ -337,7 +588,7 @@ def c_scan(*args, **kwargs):
     for i in range(len(total)):
         p_pi[total[i]] = pad(str(i), plen, r=False)
     
-    print(f"{suc}Scan completed")
+    print(f"{suc}Scan completed\n")
     
 def c_show(*args, **kwargs):
     # Validate keyword
@@ -427,7 +678,9 @@ def c_uplink(*args, **kwargs):
             return
     
     change_flag = False
+    indent = True
     for v in vl:
+        vn=v["n"]
         pde = v["lpde"]
         
         to_add = []
@@ -449,27 +702,32 @@ def c_uplink(*args, **kwargs):
                     not de.is_symlink() and
                     not de.is_junction()
             ]
-            to_add = to_add + [de.name for de in to_replace]
+            replace_names = [de.name for de in to_replace]
+            to_add = to_add + replace_names
         
-        vn = v["n"]
-        print(f"\n\tThese plugins will be uplinked in {v_pi[vn]}. {vn}:", end="")
-        if len(to_add) == 0:
-            print("none\n")
+        i, _ = listplugins(
+            message="These plugins will be uplinked in",
+            vault=v,
+            plugin_name_list=to_add,
+            indent=indent
+        )
+        if i == 0:
+            indent = False
             continue
-        print("\n")
-        for p_name in to_add:
-            print(f"\t\t{p_pi[p_name]}. {p_name}")
-        print()
+        else:
+            indent = True
         
         if len(to_replace) > 0:
-            print(f"\tThese plugins will be replaced in {v_pi[vn]}. {vn}:\n")
-            for n in (de.name for de in to_replace):
-                print(f"\t\t{p_pi[n]}. {n}")
-            print()
+            listplugins(
+                message="These plugins will be replaced in",
+                vault=v,
+                plugin_name_list=replace_names,
+                indent=False
+            )
 
         if confirm() == True:
             if mode_replace:
-                trash_path = os.path.join(trash, v["n"], time())
+                trash_path = os.path.join(trash, vn, time())
                 os.makedirs(trash_path) 
             
                 for de in to_replace:
@@ -543,21 +801,17 @@ def c_upload(*args, **kwargs):
             pl.remove(p)
             continue
         i += 1
-
     if errflag:
         offerhelp()
     
-    print(
-        f"\n\tFollowing plugins will be uploaded from " +
-        f"{v_pi[v["n"]]}. {v["n"]}:", end=''
+    i, _ = listplugins(
+        message="Following plugins will be uploaded from",
+        vault=v,
+        plugin_name_list=pl
     )
-    if len(pl) == 0:
-        print("none\n")
+    if i == 0:
         return
-    print("\n")
-    for p in pl:
-        print(f"\t\t{p_pi[p]}. {p}")
-    print()
+    
     if confirm() == False:
         print("\tUpload canceled")
         return
@@ -573,10 +827,12 @@ def c_upload(*args, **kwargs):
 commands = {
     c.__name__[2:]: c 
     for c in (
+        c_copy,
         c_clear, 
         c_exit, 
         c_find, 
         c_help, 
+        c_hotkeys,
         c_list, 
         c_remove, 
         c_scan, 
@@ -729,6 +985,63 @@ def confirm():
 def time():
     s = str(datetime.now())
     return (s[:10] + s[11:]).replace(':', '-')
+
+def listplugins(
+    *args, 
+    message = None, 
+    vault=None, 
+    plugin_name_list = None, 
+    mode=None,
+    indent=True
+):
+    # Valid input:
+    # vault, [plugin_name_list], mode, [messgage]
+    #[vault], plugin_name_list, [messgage]
+
+    if indent:
+        print()
+    if message is None:
+        message = ""
+    vault_str = ": "
+    if vault is not None:
+        vn = vault["n"]
+        vault_str = f" {v_pi[vn]}. {vn}" + vault_str
+    
+    print("\t" + message + vault_str, end=" ")
+    
+    if mode is not None: # need to filter by mode
+        if vault is None: 
+            raise ValueError() # should never happen!
+        lpd = [pd for pd in scanvault(vault) if pd["m"] in mode]
+        if plugin_name_list is not None:
+            lpd = [pd for pd in lpd if pd["n"] in plugin_name_list]
+        if len(lpd) == 0:
+            print("none\n")
+            return 0, None
+        lpd.sort(key=lambda pd: pd["i"])
+        
+        print("\n")
+        i = 0
+        for pd in lpd:
+            i += 1
+            pn = pd["n"]
+            print(f"\t\t[{pd["m"]}] {p_pi[pn]}. {pn}")
+        print()
+        return i, lpd
+    elif plugin_name_list is not None:
+        if len(plugin_name_list) == 0:
+            print("none\n")
+            return 0, None
+        
+        print("\n")
+        i = 0
+        for pn in plugin_name_list:
+            i += 1
+            print(f"\t\t{p_pi[pn]}. {pn}")
+        print()
+        return i, None
+    else:
+        raise ValueError() # should never happen!
 
 def main():
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
