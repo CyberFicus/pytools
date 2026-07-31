@@ -40,4 +40,11 @@ python opm.py <obs_dir>
 
 ### Notes:
 - Currently only Windows is supported
-- On Windows junctions are used instead of symlinks whenever possible, as their creation requires no admin privileges by default 
+- On Windows junctions are used instead of symlinks whenever possible, as their creation requires no admin privileges by default   
+  - Hotkey management cannot be done without symlinks
+
+### TO DO:
+These may or may not be added/done later:
+- [ ] Test for errors when there are no vaults/plugins present
+- [ ] Check for symlink creation rights before trying to create them "hotkeys uplink"
+- [ ] Ability to read commands from file
