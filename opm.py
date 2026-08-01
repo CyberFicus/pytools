@@ -23,7 +23,7 @@ v_pi = {} # vault padded indexes
 p_pi = {} # plugin padded indexes
 pspath = psroot
 
-version = "1.1"
+version = "1.1.1"
 greetstr = rf"""
 {"\t"}     _______   _______   __      __
 {"\t"}    \  ___  / \   __  \ \  \    /  /
@@ -153,6 +153,7 @@ def c_copy(*args, **kwargs):
     if args[2] == "uploaded":
         lde = upde
         msg = f"These uploaded plugins will be copied to"
+        src_s = f"uploaded"
     else:
         vr = parserange(args[2], len(vl))
         if vr is None:
